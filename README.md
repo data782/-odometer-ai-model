@@ -1,126 +1,86 @@
 # AI Vision Reader API
 
-A FastAPI microservice that uses Google Gemini to extract data from images. Supports odometer reading (numeric value) and tyre serial number extraction.
+FastAPI service for extracting vehicle data from images using Google Gemini Vision.
 
----
+Supported modes:
+- `odometer`: extract odometer reading (digits)
+- `tyre`: extract tyre serial number
 
-## Requirements
+## Why this service
+- Simple authenticated HTTP API
+- Multi-model + multi-key fallback for higher reliability
+- Stateless and deployable on Render, Docker, or any ASGI host
 
-- Python 3.9+
-- Google Gemini API key(s)
-- A secret key for API authentication
+## Quick Start
 
----
-
-## Setup
-
-### 1. Clone the repository
-
+### 1. Install
 ```bash
-git clone <repo-url>
-cd POC-VM_2
-```
-
-### 2. Create and activate a virtual environment
-
-```bash
-python -m venv venv
-
+python -m venv .venv
 # Windows
-venv\Scripts\activate
+.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
 
-# Linux / macOS
-source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
-
-Create a `.env` file or export the following variables in your shell:
-
+### 2. Configure environment variables
 ```env
-GEMINI_API_KEY_1=your_gemini_api_key_here
-GEMINI_API_KEY_2=optional_second_key
+# Required
+GEMINI_API_KEY_1=your_primary_gemini_key
 GEMINI_MODELS=gemini-2.5-flash,gemini-1.5-flash
-ODOMETER_API_KEY=your_secret_auth_key
+ODOMETER_API_KEY=replace_with_strong_random_secret
+
+# Optional fallback keys
+GEMINI_API_KEY_2=
+GEMINI_API_KEY_3=
+GEMINI_API_KEY_4=
+GEMINI_API_KEY_5=
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `GEMINI_API_KEY_1` | Yes | Primary Google Gemini API key |
-| `GEMINI_API_KEY_2..5` | No | Additional keys for fallback |
-| `GEMINI_MODELS` | Yes | Comma-separated list of Gemini models to try in order |
-| `ODOMETER_API_KEY` | Yes | Secret key used to authenticate API requests |
-
-> **Getting a Gemini API key**: Visit [Google AI Studio](https://aistudio.google.com/app/apikey) and generate a key.
-
----
-
-## Running the Server
-
+### 3. Run locally
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at `http://localhost:8000`.
+Docs:
+- Swagger: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
-For development with auto-reload:
+## Environment Variables
 
-```bash
-uvicorn main:app --reload
-```
+| Variable | Required | Description |
+|---|---|---|
+| `GEMINI_API_KEY_1` | Yes | Primary Gemini API key |
+| `GEMINI_API_KEY_2..5` | No | Additional keys for fallback when one key fails or is rate-limited |
+| `GEMINI_MODELS` | Yes | Comma-separated Gemini model IDs in priority order |
+| `ODOMETER_API_KEY` | Yes | Shared secret expected in `X-API-Key` request header |
 
----
+Notes:
+- Keep `GEMINI_MODELS` ordered from preferred to fallback.
+- On Render, store values exactly (no quotes).
+- Rotate all secrets regularly.
 
-## API Reference
+## API Contract
 
 ### `POST /api/vision-read`
 
-Extracts a value from an uploaded image.
+Headers:
+- `X-API-Key: <ODOMETER_API_KEY>`
 
-**Headers**
+Form fields:
+- `mode`: `odometer` or `tyre`
+- `file`: image file (`image/*`)
 
-| Header | Value |
-|---|---|
-| `X-API-Key` | Your `ODOMETER_API_KEY` value |
-
-**Form Fields**
-
-| Field | Type | Values |
-|---|---|---|
-| `mode` | string | `odometer` or `tyre` |
-| `file` | file | Image file (jpg, png, etc.) |
-
-**Example — curl**
-
+Example:
 ```bash
 curl -X POST "http://localhost:8000/api/vision-read" \
-  -H "X-API-Key: your_secret_auth_key" \
+  -H "X-API-Key: your_secret" \
   -F "mode=odometer" \
   -F "file=@/path/to/image.jpg"
 ```
 
-**Example — Python**
-
-```python
-import requests
-
-url = "http://localhost:8000/api/vision-read"
-headers = {"X-API-Key": "your_secret_auth_key"}
-
-with open("image.jpg", "rb") as f:
-    response = requests.post(url, headers=headers, data={"mode": "odometer"}, files={"file": f})
-
-print(response.json())
-```
-
-**Success Response**
-
+Success (`200`):
 ```json
 {
   "status": "success",
@@ -129,38 +89,57 @@ print(response.json())
 }
 ```
 
-**Failure Responses**
+Common errors:
 
-| Scenario | HTTP Status | Response |
+| Scenario | HTTP | Response |
 |---|---|---|
-| Invalid API key | 401 | `{"detail": "Unauthorized"}` |
-| Invalid mode | 400 | `{"status": "fail", "message": "Invalid mode. Use 'odometer' or 'tyre'."}` |
-| Non-image file | 400 | `{"status": "fail", "message": "Only image files are allowed"}` |
-| Value not found in image | 400 | `{"status": "fail", "mode": "...", "message": "Value not detected"}` |
-| All Gemini attempts failed | 500 | `{"status": "error", "mode": "...", "message": "All LLM attempts failed"}` |
+| Invalid API key | `401` | `{"detail":"Unauthorized"}` |
+| Invalid mode | `400` | `{"status":"fail","message":"Invalid mode. Use 'odometer' or 'tyre'."}` |
+| Non-image upload | `400` | `{"status":"fail","message":"Only image files are allowed"}` |
+| Value not detected | `400` | `{"status":"fail","mode":"...","message":"Value not detected"}` |
+| All model/key attempts failed | `500` | `{"status":"error","mode":"...","message":"All LLM attempts failed"}` |
 
----
+## How fallback works
+For each incoming request:
+1. Iterate models in `GEMINI_MODELS`
+2. For each model, iterate keys `GEMINI_API_KEY_1..5`
+3. Return first successful extraction
+4. If all combinations fail, return `500`
 
-## How It Works
+## Deploy to Render
 
-The service uses a **multi-key, multi-model fallback** strategy for resilience:
+Service settings:
+- Runtime: Python
+- Build command:
+```bash
+pip install -r requirements.txt
+```
+- Start command:
+```bash
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
 
-1. For each configured Gemini model (in `GEMINI_MODELS` order)
-2. For each configured API key (`GEMINI_API_KEY_1..5`)
-3. Try to extract the value using Gemini vision
+Required env vars in Render:
+```env
+GEMINI_API_KEY_1=your_primary_gemini_key
+GEMINI_MODELS=gemini-2.5-flash,gemini-1.5-flash
+ODOMETER_API_KEY=replace_with_strong_random_secret
+```
 
-If a key is rate-limited or a model fails, the next combination is tried automatically. All requests are logged to `logs.txt`.
+Optional env vars:
+```env
+GEMINI_API_KEY_2=
+GEMINI_API_KEY_3=
+GEMINI_API_KEY_4=
+GEMINI_API_KEY_5=
+```
 
----
+Post-deploy checks:
+1. Open `/docs`
+2. Execute one real image request
+3. Confirm logs show successful extraction
 
-## Deployment Notes
-
-- Set `ODOMETER_API_KEY` to a strong random secret before deploying.
-- Configure `GEMINI_MODELS` with at least two models for fallback reliability (e.g. `gemini-2.5-flash,gemini-1.5-flash`).
-- CORS is currently open to all origins (`*`). Restrict `allow_origins` in `main.py` for production.
-- The service is stateless — it can be deployed behind a load balancer or as a container without additional configuration.
-
-### Docker (optional)
+## Docker
 
 ```dockerfile
 FROM python:3.11-slim
@@ -172,10 +151,37 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ```bash
-docker build -t vision-reader .
+docker build -t ai-vision-reader .
 docker run -p 8000:8000 \
   -e GEMINI_API_KEY_1=your_key \
-  -e GEMINI_MODELS=gemini-2.5-flash \
+  -e GEMINI_MODELS=gemini-2.5-flash,gemini-1.5-flash \
   -e ODOMETER_API_KEY=your_secret \
-  vision-reader
+  ai-vision-reader
 ```
+
+## Production Hardening Checklist
+- Replace wildcard CORS (`*`) with explicit frontend origins
+- Keep `ODOMETER_API_KEY` secret and rotate periodically
+- Add rate limiting at gateway/load balancer
+- Enforce HTTPS only
+- Centralize logs and monitoring alerts
+- Add uptime/health checks
+
+## Operations & Troubleshooting
+
+`401 Unauthorized`
+- Client missing/incorrect `X-API-Key`
+- Server `ODOMETER_API_KEY` mismatch
+
+`500 All LLM attempts failed`
+- Invalid Gemini key or exhausted quota
+- Invalid/unsupported model in `GEMINI_MODELS`
+- Upstream Gemini transient issues
+
+`400 Value not detected`
+- Poor image quality (blur/glare)
+- Incorrect crop/angle
+
+Startup failures
+- Missing dependencies from `requirements.txt`
+- Wrong working directory or start command
