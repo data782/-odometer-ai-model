@@ -1,7 +1,9 @@
 import os
 import re
 import io
-from typing import List
+import json
+import asyncio
+from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,34 +62,54 @@ def build_prompt(mode: str) -> str:
     if mode == "odometer":
         return """
         Extract only the odometer numeric reading from this image.
-
+        Return ONLY a JSON object with the following structure:
+        {
+            "odometer": "string of digits only",
+            "confidence": float (0.0 to 1.0)
+        }
         Rules:
-        - Return digits only
-        - No explanation
-        - No units
-        - If unreadable return NOT_FOUND
+        - The "odometer" value must NOT be alphanumeric; it must contain ONLY digits (0-9).
+        - No units, no letters, no symbols, no explanation.
+        - If unreadable, set "odometer" to null and "confidence" to 0.0.
         """
 
     elif mode == "tyre":
         return """
-        Extract only the tyre serial number from this image.
-
+        Extract the tire serial number (DOT code) from this image.
+        Return ONLY a JSON object with the following structure:
+        {
+            "tire_serial": "string",
+            "confidence": float (0.0 to 1.0)
+        }
         Rules:
-        - Return the full serial exactly as visible
-        - Keep letters and numbers
-        - No explanation
-        - No extra text
-        - If unreadable return NOT_FOUND
+        - The "tire_serial" should follow the DOT format (e.g., 'DOT' followed by 8-13 characters like 'DOT 1Y7 A1111 1215').
+        - Keep letters and numbers as they appear in the DOT serial.
+        - No explanation, no extra text.
+        - If unreadable, set "tire_serial" to null and "confidence" to 0.0.
         """
 
     else:
         raise ValueError("Invalid mode")
 
 # =========================
+# UTILS
+# =========================
+
+def parse_json_response(text: str) -> Optional[dict]:
+    try:
+        # Try to find JSON block in case LLM wraps it in markdown
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return json.loads(text)
+    except Exception:
+        return None
+
+# =========================
 # LLM FALLBACK LOGIC
 # =========================
 
-def try_extract(file_bytes: bytes, mode: str):
+async def try_extract(file_bytes: bytes, mode: str):
 
     if not GEMINI_KEYS:
         raise Exception("No Gemini API keys configured")
@@ -95,9 +117,13 @@ def try_extract(file_bytes: bytes, mode: str):
     if not GEMINI_MODELS:
         raise Exception("No Gemini models configured")
 
-    image = Image.open(io.BytesIO(file_bytes))
-    prompt = build_prompt(mode)
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+    except Exception as e:
+        print(f"[ERROR] Invalid image: {e}")
+        return {"status": "fail", "message": "Invalid image file"}
 
+    prompt = build_prompt(mode)
     last_error = None
 
     for model in GEMINI_MODELS:
@@ -107,20 +133,27 @@ def try_extract(file_bytes: bytes, mode: str):
 
                 client = genai.Client(api_key=key)
 
-                response = client.models.generate_content(
+                response = await client.aio.models.generate_content(
                     model=model,
                     contents=[prompt, image]
                 )
 
                 raw_text = response.text.strip()
+                data = parse_json_response(raw_text)
 
-                if raw_text.upper() == "NOT_FOUND":
+                if not data:
+                    print(f"[RETRY] Failed to parse JSON: {raw_text}")
+                    continue
+
+                # Check if it was "NOT_FOUND" logically (null in JSON)
+                val_key = "odometer" if mode == "odometer" else "tire_serial"
+                if data.get(val_key) is None:
                     return None
 
-                return raw_text.strip()
+                return data
 
             except Exception as e:
-                print(f"[FAIL] model={model} key_end={key[-4:]}")
+                print(f"[FAIL] model={model} key_end={key[-4:]} error={str(e)}")
                 last_error = e
                 continue
 
@@ -132,11 +165,28 @@ def try_extract(file_bytes: bytes, mode: str):
 @app.post("/api/vision-read")
 async def vision_read(
     mode: str = Form(...),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     x_api_key: str = Header(None)
 ):
 
     verify_api_key(x_api_key)
+
+    # Combine file and files into a single list
+    all_files = []
+    if file:
+        all_files.append(file)
+    if files:
+        all_files.extend(files)
+
+    if not all_files:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "fail",
+                "message": "No image files provided"
+            }
+        )
 
     # Validate mode early
     if mode not in ["odometer", "tyre"]:
@@ -148,49 +198,37 @@ async def vision_read(
             }
         )
 
-    # Validate file type
-    if not file.content_type.startswith("image/"):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "fail",
-                "message": "Only image files are allowed"
+    # Process files
+    async def process_one(f: UploadFile):
+        if not f.content_type.startswith("image/"):
+            return {"status": "fail", "filename": f.filename, "message": "Only image files allowed"}
+
+        try:
+            content = await f.read()
+            result = await try_extract(content, mode)
+
+            if not result:
+                write_log("fail", mode, None)
+                return {"status": "fail", "filename": f.filename, "message": "Value not detected"}
+
+            # Log success (using the value from the result dict)
+            val_key = "odometer" if mode == "odometer" else "tire_serial"
+            write_log("success", mode, str(result.get(val_key)))
+
+            return {
+                "status": "success",
+                "filename": f.filename,
+                "result": result
             }
-        )
-
-    try:
-        file_bytes = await file.read()
-        result = try_extract(file_bytes, mode)
-
-        if not result:
+        except Exception as e:
             write_log("fail", mode, None)
+            return {"status": "error", "filename": f.filename, "message": str(e)}
 
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": "fail",
-                    "mode": mode,
-                    "message": "Value not detected"
-                }
-            )
+    # Handle multiple requests (files) at the same time
+    results = await asyncio.gather(*(process_one(f) for f in all_files))
 
-        write_log("success", mode, result)
-
-        return {
-            "status": "success",
-            "mode": mode,
-            "result": result
-        }
-
-    except Exception as e:
-        write_log("fail", mode, None)
-        print("FINAL ERROR:", str(e))
-
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "mode": mode,
-                "message": "All LLM attempts failed"
-            }
-        )
+    return {
+        "status": "success",
+        "mode": mode,
+        "results": results
+    }
