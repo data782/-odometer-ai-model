@@ -49,7 +49,18 @@ Thumbs.db
 *.wmv
 
 venv/
+.venv/
 __pycache__/
 *.log
 .env
 config1.py
+.venv313/
+tests/model_audit_reports/
+tests/model_audit.py
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+*.egg-info/
+.pytest_cache/

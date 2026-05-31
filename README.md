@@ -28,7 +28,7 @@ pip install -r requirements.txt
 ```env
 # Required
 GEMINI_API_KEY_1=your_primary_gemini_key
-GEMINI_MODELS=gemini-2.5-flash,gemini-1.5-flash
+GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash
 ODOMETER_API_KEY=replace_with_strong_random_secret
 
 # Optional fallback keys
