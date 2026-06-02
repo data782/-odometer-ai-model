@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -25,7 +26,7 @@ def healthz() -> dict[str, str]:
 
 
 def get_runtime_settings(request: Request) -> Settings:
-    return request.app.state.settings
+    return cast(Settings, request.app.state.settings)
 
 
 @router.post("/api/vision-read", response_model=None)
@@ -57,7 +58,7 @@ async def vision_read(
             content={"status": "fail", "message": "Invalid mode. Use 'odometer' or 'tyre'."},
         )
 
-    async def process_one(f: UploadFile):
+    async def process_one(f: UploadFile) -> dict[str, Any]:
         if not f.content_type or not f.content_type.startswith("image/"):
             return {"status": "fail", "filename": f.filename, "message": "Only image files allowed"}
 
@@ -83,5 +84,5 @@ async def vision_read(
             await asyncio.to_thread(write_log, "fail", mode, None)
             return {"status": "error", "filename": f.filename, "message": str(e)}
 
-    results = await asyncio.gather(*(process_one(f) for f in all_files))
-    return {"status": "success", "mode": mode, "results": results}
+    results: list[dict[str, Any]] = await asyncio.gather(*(process_one(f) for f in all_files))
+    return cast(VisionReadResponse, {"status": "success", "mode": mode, "results": results})

@@ -4,11 +4,34 @@ import json
 import logging
 import re
 from functools import lru_cache
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class ParseErrorResult(TypedDict):
+    status: str
+    reason: str
+    message: str
+    raw_text: str
+
+
+class ValueNotDetectedResult(TypedDict):
+    status: str
+    reason: str
+    message: str
+
+
+class VisionDataResult(TypedDict, total=False):
+    status: str
+    odometer: str | None
+    tire_serial: str | None
+    confidence: float
+    reason: str
+    message: str
+    raw_text: str
 
 
 def build_prompt(mode: str) -> str:
@@ -41,12 +64,12 @@ def build_prompt(mode: str) -> str:
     raise ValueError("Invalid mode")
 
 
-def parse_json_response(text: str) -> dict[str, Any]:
+def parse_json_response(text: str) -> VisionDataResult | ParseErrorResult:
     try:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
-            return json.loads(match.group())
-        return json.loads(text)
+            return cast(VisionDataResult, json.loads(match.group()))
+        return cast(VisionDataResult, json.loads(text))
     except json.JSONDecodeError:
         logger.exception("Failed to parse JSON from model response")
         return {
@@ -66,13 +89,17 @@ def parse_json_response(text: str) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=16)
-def get_client(api_key: str):
+def get_client(api_key: str) -> Any:
     from google import genai
 
     return genai.Client(api_key=api_key)
 
 
-async def try_extract(file_bytes: bytes, mode: str, settings: Settings) -> dict[str, Any]:
+async def try_extract(
+    file_bytes: bytes,
+    mode: str,
+    settings: Settings,
+) -> VisionDataResult | ParseErrorResult | ValueNotDetectedResult:
     if not settings.gemini_keys:
         raise Exception("No Gemini API keys configured")
     if not settings.gemini_model_list:

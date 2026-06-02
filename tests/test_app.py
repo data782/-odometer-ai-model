@@ -3,6 +3,8 @@ from io import BytesIO
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from PIL import Image
+from pydantic import SecretStr
+from pytest import MonkeyPatch
 
 from app.api import routes as vision_routes
 from app.core.config import Settings
@@ -75,7 +77,7 @@ def test_trace_endpoint_is_not_double_appended() -> None:
     assert _trace_endpoint(endpoint) == endpoint.rstrip("/")
 
 
-def test_vision_read_success(monkeypatch) -> None:
+def test_vision_read_success(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(vision_routes, "try_extract", _fake_extract)
     monkeypatch.setattr(vision_routes, "write_log", lambda *_args, **_kwargs: None)
     client = TestClient(create_app(_test_settings()))
@@ -91,7 +93,7 @@ def test_vision_read_success(monkeypatch) -> None:
     assert response.json()["results"][0]["result"]["odometer"] == "144969"
 
 
-def test_vision_read_parse_error(monkeypatch) -> None:
+def test_vision_read_parse_error(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(vision_routes, "try_extract", _fake_parse_error)
     monkeypatch.setattr(vision_routes, "write_log", lambda *_args, **_kwargs: None)
     client = TestClient(create_app(_test_settings()))
@@ -109,7 +111,7 @@ def test_vision_read_parse_error(monkeypatch) -> None:
     assert body["results"][0]["reason"] == "parse_error"
 
 
-def test_vision_read_value_not_detected(monkeypatch) -> None:
+def test_vision_read_value_not_detected(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(vision_routes, "try_extract", _fake_not_detected)
     monkeypatch.setattr(vision_routes, "write_log", lambda *_args, **_kwargs: None)
     client = TestClient(create_app(_test_settings()))
@@ -125,7 +127,7 @@ def test_vision_read_value_not_detected(monkeypatch) -> None:
     assert response.json()["results"][0]["message"] == "Value not detected"
 
 
-def test_vision_read_rejects_non_image(monkeypatch) -> None:
+def test_vision_read_rejects_non_image(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(vision_routes, "write_log", lambda *_args, **_kwargs: None)
     client = TestClient(create_app(_test_settings()))
 
@@ -153,11 +155,15 @@ def test_vision_read_unauthorized() -> None:
     assert response.status_code == 401
 
 
-async def _fake_extract(_file_bytes: bytes, _mode: str, _settings: Settings):
+async def _fake_extract(_file_bytes: bytes, _mode: str, _settings: Settings) -> dict[str, object]:
     return {"odometer": "144969", "confidence": 0.98}
 
 
-async def _fake_parse_error(_file_bytes: bytes, _mode: str, _settings: Settings):
+async def _fake_parse_error(
+    _file_bytes: bytes,
+    _mode: str,
+    _settings: Settings,
+) -> dict[str, object]:
     return {
         "status": "fail",
         "reason": "parse_error",
@@ -166,7 +172,11 @@ async def _fake_parse_error(_file_bytes: bytes, _mode: str, _settings: Settings)
     }
 
 
-async def _fake_not_detected(_file_bytes: bytes, _mode: str, _settings: Settings):
+async def _fake_not_detected(
+    _file_bytes: bytes,
+    _mode: str,
+    _settings: Settings,
+) -> dict[str, object]:
     return {
         "status": "fail",
         "reason": "value_not_detected",
@@ -186,7 +196,7 @@ def _test_settings() -> Settings:
         APP_NAME="test-service",
         ENVIRONMENT="test",
         LOG_LEVEL="WARNING",
-        ODOMETER_API_KEY="test-odometer-key",
-        GEMINI_API_KEY_1="test-gemini-key",
+        ODOMETER_API_KEY=SecretStr("test-odometer-key"),
+        GEMINI_API_KEY_1=SecretStr("test-gemini-key"),
         GEMINI_MODELS="gemini-2.5-flash",
     )

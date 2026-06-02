@@ -4,7 +4,7 @@ from pydantic import BaseModel
 class VisionSuccessResult(BaseModel):
     status: str
     filename: str
-    result: dict
+    result: dict[str, object]
 
 
 class VisionErrorResult(BaseModel):
