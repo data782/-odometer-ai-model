@@ -3,9 +3,9 @@ import asyncio
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.api.schemas import VisionReadResponse
 from app.core.audit import write_log
 from app.core.config import Settings
-from app.api.schemas import VisionReadResponse
 from app.services.vision import try_extract
 
 PROCESSING_LIMIT = 5

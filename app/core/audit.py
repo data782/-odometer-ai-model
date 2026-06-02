@@ -15,5 +15,3 @@ def write_log(status: str, mode: str, value: str | None) -> None:
 
     with LOG_FILE.open("a", encoding="utf-8") as file_handle:
         file_handle.write(line)
-
-    print("Log written:", line.strip())

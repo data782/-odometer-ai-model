@@ -3,8 +3,8 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.api.routes import router
 from app.core.config import Settings, get_settings
@@ -25,7 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(app_settings.log_level)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(_: FastAPI):
         if app_settings.environment != "test":
             app_settings.validate_runtime_settings()
         yield
