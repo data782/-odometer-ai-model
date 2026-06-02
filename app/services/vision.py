@@ -90,9 +90,10 @@ def parse_json_response(text: str) -> VisionDataResult | ParseErrorResult:
 
 @lru_cache(maxsize=16)
 def get_client(api_key: str) -> Any:
-    from google.genai import Client
+    from importlib import import_module
 
-    return Client(api_key=api_key)
+    genai = import_module("google.genai")
+    return genai.Client(api_key=api_key)
 
 
 async def try_extract(
