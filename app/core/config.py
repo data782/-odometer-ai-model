@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     otel_exporter_otlp_headers: SecretStr | None = Field(
         default=None, alias="OTEL_EXPORTER_OTLP_HEADERS"
     )
+    cors_allowed_origins: str = Field(default="http://localhost:3000", alias="CORS_ALLOWED_ORIGINS")
 
     @property
     def observability_enabled(self) -> bool:
@@ -61,6 +62,21 @@ class Settings(BaseSettings):
             self.gemini_api_key_5,
         ]
         return [k.get_secret_value() for k in keys if k]
+
+    @property
+    def cors_allowed_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
+    def validate_runtime_settings(self) -> None:
+        missing: list[str] = []
+        if not self.odometer_auth_key:
+            missing.append("ODOMETER_API_KEY")
+        if not self.gemini_keys:
+            missing.append("GEMINI_API_KEY_1..5")
+        if not self.gemini_model_list:
+            missing.append("GEMINI_MODELS")
+        if missing:
+            raise ValueError(f"Missing required runtime settings: {', '.join(missing)}")
 
 
 @lru_cache

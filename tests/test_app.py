@@ -1,9 +1,12 @@
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
+from io import BytesIO
+from PIL import Image
 
 from app.core.config import Settings
 from app.core.observability import _trace_endpoint
 from app.main import create_app
+from app.api import routes as vision_routes
 
 
 def test_hello_world() -> None:
@@ -71,9 +74,118 @@ def test_trace_endpoint_is_not_double_appended() -> None:
     assert _trace_endpoint(endpoint) == endpoint.rstrip("/")
 
 
+def test_vision_read_success(monkeypatch) -> None:
+    monkeypatch.setattr(vision_routes, "try_extract", _fake_extract)
+    monkeypatch.setattr(vision_routes, "write_log", lambda *args, **kwargs: None)
+    client = TestClient(create_app(_test_settings()))
+
+    response = client.post(
+        "/api/vision-read",
+        headers={"x-api-key": "test-odometer-key"},
+        data={"mode": "odometer"},
+        files={"file": ("sample.png", _png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["result"]["odometer"] == "144969"
+
+
+def test_vision_read_parse_error(monkeypatch) -> None:
+    monkeypatch.setattr(vision_routes, "try_extract", _fake_parse_error)
+    monkeypatch.setattr(vision_routes, "write_log", lambda *args, **kwargs: None)
+    client = TestClient(create_app(_test_settings()))
+
+    response = client.post(
+        "/api/vision-read",
+        headers={"x-api-key": "test-odometer-key"},
+        data={"mode": "odometer"},
+        files={"file": ("sample.png", _png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"][0]["status"] == "fail"
+    assert body["results"][0]["reason"] == "parse_error"
+
+
+def test_vision_read_value_not_detected(monkeypatch) -> None:
+    monkeypatch.setattr(vision_routes, "try_extract", _fake_not_detected)
+    monkeypatch.setattr(vision_routes, "write_log", lambda *args, **kwargs: None)
+    client = TestClient(create_app(_test_settings()))
+
+    response = client.post(
+        "/api/vision-read",
+        headers={"x-api-key": "test-odometer-key"},
+        data={"mode": "odometer"},
+        files={"file": ("sample.png", _png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["message"] == "Value not detected"
+
+
+def test_vision_read_rejects_non_image(monkeypatch) -> None:
+    monkeypatch.setattr(vision_routes, "write_log", lambda *args, **kwargs: None)
+    client = TestClient(create_app(_test_settings()))
+
+    response = client.post(
+        "/api/vision-read",
+        headers={"x-api-key": "test-odometer-key"},
+        data={"mode": "odometer"},
+        files={"file": ("sample.txt", b"not an image", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["message"] == "Only image files allowed"
+
+
+def test_vision_read_unauthorized() -> None:
+    client = TestClient(create_app(_test_settings()))
+
+    response = client.post(
+        "/api/vision-read",
+        headers={"x-api-key": "wrong-key"},
+        data={"mode": "odometer"},
+        files={"file": ("sample.png", _png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 401
+
+
+async def _fake_extract(file_bytes: bytes, mode: str, settings: Settings):
+    return {"odometer": "144969", "confidence": 0.98}
+
+
+async def _fake_parse_error(file_bytes: bytes, mode: str, settings: Settings):
+    return {
+        "status": "fail",
+        "reason": "parse_error",
+        "message": "Model response was not valid JSON",
+        "raw_text": "{bad json",
+    }
+
+
+async def _fake_not_detected(file_bytes: bytes, mode: str, settings: Settings):
+    return {
+        "status": "fail",
+        "reason": "value_not_detected",
+        "message": "Value not detected",
+    }
+
+
+def _png_bytes() -> bytes:
+    image = Image.new("RGB", (1, 1), color="white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _test_settings() -> Settings:
     return Settings(
         APP_NAME="test-service",
         ENVIRONMENT="test",
         LOG_LEVEL="WARNING",
+        ODOMETER_API_KEY="test-odometer-key",
+        GEMINI_API_KEY_1="test-gemini-key",
+        GEMINI_MODELS="gemini-2.5-flash",
     )

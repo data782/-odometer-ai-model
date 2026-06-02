@@ -1,9 +1,14 @@
+import asyncio
 import io
 import json
+import logging
 import re
+from functools import lru_cache
 from typing import Any
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def build_prompt(mode: str) -> str:
@@ -36,27 +41,47 @@ def build_prompt(mode: str) -> str:
     raise ValueError("Invalid mode")
 
 
-def parse_json_response(text: str) -> dict[str, Any] | None:
+def parse_json_response(text: str) -> dict[str, Any]:
     try:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             return json.loads(match.group())
         return json.loads(text)
+    except json.JSONDecodeError:
+        logger.exception("Failed to parse JSON from model response")
+        return {
+            "status": "fail",
+            "reason": "parse_error",
+            "message": "Model response was not valid JSON",
+            "raw_text": text,
+        }
     except Exception:
-        return None
+        logger.exception("Unexpected parse error while decoding model response")
+        return {
+            "status": "fail",
+            "reason": "parse_error",
+            "message": "Unexpected error while parsing model response",
+            "raw_text": text,
+        }
 
 
-async def try_extract(file_bytes: bytes, mode: str, settings: Settings) -> dict[str, Any] | None:
+@lru_cache(maxsize=16)
+def get_client(api_key: str):
+    from google import genai
+
+    return genai.Client(api_key=api_key)
+
+
+async def try_extract(file_bytes: bytes, mode: str, settings: Settings) -> dict[str, Any]:
     if not settings.gemini_keys:
         raise Exception("No Gemini API keys configured")
     if not settings.gemini_model_list:
         raise Exception("No Gemini models configured")
 
-    from PIL import Image
-    from google import genai
-
     try:
-        image = Image.open(io.BytesIO(file_bytes))
+        from PIL import Image
+
+        image = await asyncio.to_thread(Image.open, io.BytesIO(file_bytes))
     except Exception:
         return {"status": "fail", "message": "Invalid image file"}
 
@@ -66,18 +91,22 @@ async def try_extract(file_bytes: bytes, mode: str, settings: Settings) -> dict[
     for model in settings.gemini_model_list:
         for key in settings.gemini_keys:
             try:
-                client = genai.Client(api_key=key)
+                client = get_client(key)
                 response = await client.aio.models.generate_content(
                     model=model,
                     contents=[prompt, image],
                 )
                 raw_text = response.text.strip()
                 data = parse_json_response(raw_text)
-                if not data:
-                    continue
+                if data.get("status") == "fail":
+                    return data
                 val_key = "odometer" if mode == "odometer" else "tire_serial"
                 if data.get(val_key) is None:
-                    return None
+                    return {
+                        "status": "fail",
+                        "reason": "value_not_detected",
+                        "message": "Value not detected",
+                    }
                 return data
             except Exception as e:
                 last_error = e

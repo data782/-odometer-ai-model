@@ -1,8 +1,10 @@
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import Settings, get_settings
@@ -22,7 +24,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
 
-    app = FastAPI(title=app_settings.app_name)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if app_settings.environment != "test":
+            app_settings.validate_runtime_settings()
+        yield
+
+    app = FastAPI(title=app_settings.app_name, lifespan=lifespan)
+    app.state.settings = app_settings
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=app_settings.cors_allowed_origin_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.middleware("http")
     async def request_logging_middleware(

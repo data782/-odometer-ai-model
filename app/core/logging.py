@@ -2,7 +2,7 @@ import json
 import logging
 import sys
 from contextvars import ContextVar, Token
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from opentelemetry import trace
@@ -13,7 +13,7 @@ request_trace_id: ContextVar[str | None] = ContextVar("request_trace_id", defaul
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "severity": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
