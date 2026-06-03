@@ -1,5 +1,0 @@
-fastapi
-uvicorn
-Pillow
-google-genai
-python-multipart
