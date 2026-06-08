@@ -64,3 +64,4 @@ htmlcov/
 build/
 *.egg-info/
 .pytest_cache/
+logs.txt
