@@ -8,7 +8,7 @@ from pytest import MonkeyPatch
 
 from app.api import routes as vision_routes
 from app.core.config import Settings
-from app.core.observability import _trace_endpoint
+from app.core.observability import _parse_otlp_headers, _trace_endpoint
 from app.main import create_app
 
 
@@ -75,6 +75,12 @@ def test_trace_endpoint_is_not_double_appended() -> None:
     endpoint = "https://otlp-gateway-prod-ap-south-1.grafana.net/otlp/v1/traces/"
 
     assert _trace_endpoint(endpoint) == endpoint.rstrip("/")
+
+
+def test_otlp_headers_are_url_decoded() -> None:
+    headers = _parse_otlp_headers("Authorization=Basic%20abc123")
+
+    assert headers == {"Authorization": "Basic abc123"}
 
 
 def test_vision_read_success(monkeypatch: MonkeyPatch) -> None:
