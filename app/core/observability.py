@@ -1,3 +1,5 @@
+from urllib.parse import unquote
+
 from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -42,7 +44,7 @@ def _parse_otlp_headers(raw_headers: str) -> dict[str, str]:
     for item in raw_headers.split(","):
         key, separator, value = item.partition("=")
         if separator and key.strip() and value.strip():
-            headers[key.strip()] = value.strip()
+            headers[key.strip()] = unquote(value.strip())
     return headers
 
 
