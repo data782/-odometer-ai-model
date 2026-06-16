@@ -65,8 +65,6 @@ build/
 *.egg-info/
 .pytest_cache/
 logs.txt
-
-
 edge_case/
 outputs/
 odometer_ai_reader_email_draft.txt
