@@ -65,3 +65,9 @@ build/
 *.egg-info/
 .pytest_cache/
 logs.txt
+
+
+edge_case/
+outputs/
+odometer_ai_reader_email_draft.txt
+Odometer AI Reader (odometer-ai-model) - Service Overview.docx

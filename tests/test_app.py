@@ -204,5 +204,5 @@ def _test_settings() -> Settings:
         LOG_LEVEL="WARNING",
         ODOMETER_API_KEY=SecretStr("test-odometer-key"),
         GEMINI_API_KEY_1=SecretStr("test-gemini-key"),
-        GEMINI_MODELS="gemini-2.5-flash",
+        GEMINI_MODELS=SecretStr("gemini-2.5-flash"),
     )
